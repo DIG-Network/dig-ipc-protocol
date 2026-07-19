@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use ed25519_dalek::{Signer as _, SigningKey};
+use chia_bls::SecretKey;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use sha2::{Digest, Sha256};
@@ -11,25 +11,26 @@ use crate::domain::{Signature, SigningPublicKey, NONCE_LEN};
 use crate::signer::{DidSigningKeyResolver, SessionSigner};
 use crate::transport::{FrameTransport, SessionEntropy};
 
-/// A deterministic Ed25519 [`SessionSigner`] seeded from a `u64`, so tests pin an identity without a
+/// A deterministic BLS12-381 [`SessionSigner`] seeded from a `u64`, so tests pin an identity without a
 /// hard-coded key. Also usable as the DID resolver target.
 pub struct TestSigner {
-    key: SigningKey,
+    key: SecretKey,
 }
 
 impl TestSigner {
-    /// A signer with keys derived deterministically from `seed` (via ChaCha20, not a hard-coded key).
+    /// A signer with keys derived deterministically from `seed` (via ChaCha20 seed material fed to
+    /// `SecretKey::from_seed`'s EIP-2333 HKDF, not a hard-coded key).
     pub fn seeded(seed: u64) -> Self {
         let mut secret = [0u8; 32];
         ChaCha20Rng::seed_from_u64(seed).fill_bytes(&mut secret);
         Self {
-            key: SigningKey::from_bytes(&secret),
+            key: SecretKey::from_seed(&secret),
         }
     }
 
     /// The public key as the contract newtype.
     pub fn public(&self) -> SigningPublicKey {
-        SigningPublicKey::new(self.key.verifying_key().to_bytes())
+        SigningPublicKey::new(self.key.public_key().to_bytes())
     }
 }
 
@@ -39,7 +40,7 @@ impl SessionSigner for TestSigner {
     }
 
     fn sign(&self, message: &[u8]) -> Signature {
-        Signature::new(self.key.sign(message).to_bytes())
+        Signature::new(chia_bls::sign(&self.key, message).to_bytes())
     }
 }
 

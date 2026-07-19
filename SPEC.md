@@ -10,8 +10,8 @@ Layering: this file is the repo's own contract; the cross-repo interaction map i
 
 ## 1. Roles and trust boundary
 
-- **App (client):** holds the user's private identity key (`dig-identity` slot `0x0010`, Ed25519). It
-  proves possession of the key to the engine and, thereafter, signs engine-initiated operations
+- **App (client):** holds the user's private identity key (`dig-identity` slot `0x0010`, BLS12-381 G1).
+  It proves possession of the key to the engine and, thereafter, signs engine-initiated operations
   in-process. The private key MUST NEVER be serialized onto the channel.
 - **Engine (server):** holds NO user key. It mints challenges, verifies signatures, and tracks
   sessions. It cannot itself sign anything with the user's identity.
@@ -35,8 +35,9 @@ as another (a cross-protocol signing oracle).
 - `len16(x)` is the big-endian `u16` byte length of `x`; `payload_type` longer than `u16::MAX` bytes is
   a protocol error and MUST be rejected before signing (the builder returns `None`).
 - `profile_did`, `payload_type`, `message` are UTF-8 byte sequences.
-- Signatures are Ed25519, `SIGNATURE_LEN` (64) bytes, verified with `verify_strict` (rejects malleable
-  / small-order edge cases).
+- Signatures are BLS12-381 AugScheme (G2), `SIGNATURE_LEN` (96) bytes, verified against a
+  `SIGNING_KEY_LEN` (48)-byte compressed G1 public key; malformed key/signature bytes fail closed
+  (never panic).
 
 Golden vectors (KATs, `tests/conformance.rs`) — all hex:
 
@@ -56,7 +57,7 @@ app assigns integer `id`s to its requests; the engine echoes the `id` of the req
 
 ### 3.1 `control.session.begin` (app → engine)
 
-Request `params`: `{ profile_did: string, signing_pubkey_hex: string }` (lowercase hex, 32 bytes).
+Request `params`: `{ profile_did: string, signing_pubkey_hex: string }` (lowercase hex, 48 bytes).
 Result: `{ nonce_b64: string, session_candidate: string }` — the nonce (base64) to sign and an opaque
 single-use candidate token.
 
@@ -97,8 +98,8 @@ handshake response, and both sides MUST service it in order.
 | `MAX_INTERLEAVED_CALLBACKS` | 64 | App gives up if the engine floods callbacks without answering. |
 | `MAX_PENDING_CANDIDATES` | 256 | Engine evicts the oldest un-attached candidate (state-growth defense). |
 | `NONCE_LEN` | 32 | Attach-challenge nonce length. |
-| `SIGNING_KEY_LEN` | 32 | Ed25519 public-key length. |
-| `SIGNATURE_LEN` | 64 | Ed25519 signature length. |
+| `SIGNING_KEY_LEN` | 48 | BLS12-381 compressed G1 public-key length. |
+| `SIGNATURE_LEN` | 96 | BLS12-381 compressed G2 AugScheme signature length. |
 | `ENGINE_CAPABILITIES` | `["content.serve","content.fetch","sync","subscribe"]` | Default advertised set. |
 
 ## 5. Error taxonomy (APP-SIGN)

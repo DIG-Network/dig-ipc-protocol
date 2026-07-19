@@ -102,7 +102,7 @@ impl<E: SessionEntropy, R: DidSigningKeyResolver> EngineSessionRegistry<E, R> {
     ///
     /// # Errors
     ///
-    /// [`AttachError::Malformed`] if the advertised `signing_pubkey_hex` is not a valid 32-byte key.
+    /// [`AttachError::Malformed`] if the advertised `signing_pubkey_hex` is not a valid 48-byte key.
     pub fn begin(&mut self, params: &BeginParams) -> Result<BeginResult, AttachError> {
         let advertised_key = SigningPublicKey::from_hex(&params.signing_pubkey_hex)
             .ok_or_else(|| AttachError::Malformed("signing_pubkey_hex".to_string()))?;
@@ -225,7 +225,7 @@ fn decode_signature(signature_b64: &str) -> Result<Signature, AttachError> {
         .map_err(|_| AttachError::Malformed("signature_b64 is not base64".to_string()))?;
     let bytes: [u8; SIGNATURE_LEN] = bytes
         .try_into()
-        .map_err(|_| AttachError::Malformed("signature is not 64 bytes".to_string()))?;
+        .map_err(|_| AttachError::Malformed(format!("signature is not {SIGNATURE_LEN} bytes")))?;
     Ok(Signature::new(bytes))
 }
 

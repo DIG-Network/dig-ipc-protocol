@@ -10,7 +10,7 @@ use crate::domain::{Signature, SigningPublicKey};
 /// inject a fake. Keeping this a narrow seam is what enforces the custody boundary: the role-half can
 /// sign and name the public key, but can never read, copy, or transmit the private key.
 pub trait SessionSigner {
-    /// The Ed25519 signing public key (`dig-identity` slot `0x0010`).
+    /// The BLS12-381 G1 signing public key (`dig-identity` slot `0x0010`).
     fn signing_public_key(&self) -> SigningPublicKey;
 
     /// Sign `message` with the in-memory identity key, returning only the detached signature.
