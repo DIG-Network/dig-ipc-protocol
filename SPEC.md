@@ -59,7 +59,10 @@ app assigns integer `id`s to its requests; the engine echoes the `id` of the req
 
 Request `params`: `{ profile_did: string, signing_pubkey_hex: string }` (lowercase hex, 48 bytes).
 Result: `{ nonce_b64: string, session_candidate: string }` — the nonce (base64) to sign and an opaque
-single-use candidate token.
+single-use candidate token. The app MUST reject a decoded nonce that is not exactly `NONCE_LEN` (32)
+bytes (`InvalidNonceLength`) BEFORE signing the challenge: the fixed-length nonce is what makes the
+`DOMAIN ‖ nonce ‖ profile_did` concatenation an unambiguous parse without a delimiter, so a
+wrong-length nonce is never signed over.
 
 ### 3.2 `control.session.attach` (app → engine)
 
