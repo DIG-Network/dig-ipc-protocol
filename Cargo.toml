@@ -1,0 +1,46 @@
+# dig-ipc-protocol — the canonical dig-app ⇄ dig-node IPC session/signing contract.
+#
+# ONE ecosystem definition of the local IPC channel between the branded user app (dig-app, the
+# identity holder) and the identity-agnostic engine (dig-node). It owns, byte-for-byte:
+#   - the domain-separated message builders the app SIGNS and the engine VERIFIES (§domain),
+#   - the frame/size bounds that keep a compromised local peer from OOMing or wedging its counterpart,
+#   - the JSON-RPC 2.0 `control.session.*` wire types + the engine→app `sign` callback,
+#   - the seam TRAITS (signer, sign-policy, transport, key-resolver, entropy) + the two generic
+#     role-halves (`SessionClient` for the app, `EngineSessionRegistry` for the engine),
+#   - the stable APP-SIGN error taxonomy the extension keys its UX off.
+#
+# LEAF CRATE by design: it has NO `dig-*` dependencies (it defines its own 32-byte key newtype), so
+# BOTH dig-app and dig-node depend on THIS one contract rather than maintaining a byte-identical copy
+# each. Transports and signers are DESCRIBED (traits) here, IMPLEMENTED by the consumers.
+[package]
+name = "dig-ipc-protocol"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75.0"
+license = "Apache-2.0 OR MIT"
+description = "Canonical dig-app ⇄ dig-node IPC session/signing contract: domain-separated challenge/callback/user-sign message builders (app signs, engine verifies), frame bounds, the JSON-RPC control.session.* wire types + sign callback, the seam traits + generic role-halves, and the stable APP-SIGN error taxonomy."
+repository = "https://github.com/DIG-Network/dig-ipc-protocol"
+readme = "README.md"
+keywords = ["dig", "ipc", "session", "ed25519", "jsonrpc"]
+categories = ["network-programming", "cryptography", "authentication"]
+
+[dependencies]
+# JSON-RPC 2.0 envelope + wire types.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Base64 for the on-wire nonce/signature/payload encodings.
+base64 = "0.22"
+# Lowercase-hex for the `signing_pubkey_hex` / `pubkey_hex` wire form.
+hex = "0.4"
+# The error taxonomy + transport/session errors.
+thiserror = "1"
+# Ed25519 verification for the canonical `verify_signature` — a pure crypto dep, NOT a dig-* dep, so
+# the crate stays a leaf. The app owns the private-key signing; this crate only verifies.
+ed25519-dalek = "2"
+# OS CSPRNG for the production `OsEntropy` nonce source (session challenge nonces).
+getrandom = "0.2"
+
+[dev-dependencies]
+# Deterministic key material + nonces for the conformance KATs (never a hard-coded literal — CodeQL).
+rand_chacha = "0.3"
+sha2 = "0.10"
