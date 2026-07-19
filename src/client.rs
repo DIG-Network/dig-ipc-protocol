@@ -432,7 +432,7 @@ impl SessionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{verify_signature, Signature, SigningPublicKey, SIGNATURE_LEN};
+    use crate::domain::{verify_signature, Signature, SigningPublicKey, NONCE_LEN, SIGNATURE_LEN};
     use crate::signer::{AllowAllSignPolicy, DenyAllSignPolicy};
     use crate::test_support::{FakeTransport, LockableSigner, TestSigner};
     use sha2::{Digest, Sha256};
@@ -507,6 +507,40 @@ mod tests {
             &client.transport.outgoing[1],
             &stranger.public()
         ));
+    }
+
+    #[test]
+    fn begin_and_attach_rejects_a_wrong_length_nonce() {
+        // The engine's nonce is a fixed-length prefix in the `domain ‖ nonce ‖ did` challenge, so a
+        // wrong length would make that concatenation ambiguous. The client MUST reject it BEFORE
+        // signing, and MUST NOT send an attach round-trip for it (only the `begin` request goes out —
+        // mirroring `begin_and_attach_fails_closed_when_the_signer_is_locked_without_a_round_trip`).
+        let short_nonce = &Sha256::digest(b"dig-ipc-protocol wrong-length nonce fixture")[..31];
+        assert_eq!(short_nonce.len(), 31);
+        let begin = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"nonce_b64":"{}","session_candidate":"cand-1"}}}}"#,
+            BASE64.encode(short_nonce)
+        );
+        let transport = FakeTransport::scripted([begin]);
+        let mut client = SessionClient::new(transport, TestSigner::seeded(42), AllowAllSignPolicy);
+
+        let result = client.begin_and_attach(profile());
+
+        assert!(
+            matches!(
+                result,
+                Err(SessionError::InvalidNonceLength {
+                    expected: NONCE_LEN,
+                    actual: 31
+                })
+            ),
+            "expected InvalidNonceLength {{ expected: {NONCE_LEN}, actual: 31 }}, got {result:?}"
+        );
+        assert_eq!(
+            client.transport.outgoing.len(),
+            1,
+            "only the begin request should have been sent — no attach round-trip for a bad nonce"
+        );
     }
 
     #[test]
