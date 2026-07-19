@@ -73,6 +73,14 @@ pub enum SessionError {
     /// the pending handshake request — a wedged or hostile engine.
     #[error("engine sent too many interleaved callbacks without a response")]
     TooManyCallbacks,
+
+    /// The identity signer had no key available (the active profile is locked) when
+    /// [`SessionClient::begin_and_attach`] needed to sign the attach challenge. Raised locally, before
+    /// any `attach` frame is sent — the engine's own fail-closed check (rejecting an all-zero
+    /// fail-safe signature) is a backstop, not the primary defense; this variant means the client
+    /// never handed a bogus signature to the wire in the first place.
+    #[error("identity signer is locked; no key to sign the attach challenge")]
+    Locked,
 }
 
 /// The app-side session client: owns the transport to one engine connection, the [`SessionSigner`]
@@ -134,7 +142,16 @@ impl<T: FrameTransport, S: SessionSigner, P: SignPolicy> SessionClient<T, S, P> 
             begin_pubkey_hex,
             "the attach signature must use the same identity key advertised in begin"
         );
-        let signature = self.signer.sign(&challenge_message(&nonce, &profile.did));
+        // Sign FALLIBLY: a locked identity yields `None`, which MUST fail closed locally as
+        // `SessionError::Locked` — never fall through to the infallible `sign` and frame the bogus
+        // all-zero fail-safe signature into the attach request. The engine would reject that signature
+        // anyway (implicit fail-closed via `verify_strict`), but sending it at all wastes a round-trip
+        // and leans on the engine as the only backstop; failing here means a locked signer never even
+        // reaches the wire. Mirrors `service_sign_callback`'s use of `try_sign`.
+        let signature = self
+            .signer
+            .try_sign(&challenge_message(&nonce, &profile.did))
+            .ok_or(SessionError::Locked)?;
 
         let attach: AttachResult = self.call(
             METHOD_ATTACH,
@@ -663,6 +680,29 @@ mod tests {
         let fresh = FakeTransport::scripted([begin_frame(1), attach_frame(2)]);
         let session = client.reattach(fresh, profile()).unwrap();
         assert_eq!(session.session_id, "sess-1");
+    }
+
+    #[test]
+    fn begin_and_attach_fails_closed_when_the_signer_is_locked_without_a_round_trip() {
+        // Only `begin` is scripted — if the client fell through to the infallible `sign` and sent an
+        // `attach` request, `call` would try to read a THIRD frame the transport doesn't have and this
+        // test would fail with a transport error instead of `SessionError::Locked`, proving no attach
+        // round-trip was attempted for a locked signer.
+        let transport = FakeTransport::scripted([begin_frame(1)]);
+        let locked = LockableSigner::seeded(42, true);
+        let mut client = SessionClient::new(transport, locked, AllowAllSignPolicy);
+
+        let result = client.begin_and_attach(profile());
+
+        assert!(
+            matches!(result, Err(SessionError::Locked)),
+            "expected SessionError::Locked, got {result:?}"
+        );
+        assert_eq!(
+            client.transport.outgoing.len(),
+            1,
+            "only the begin request should have been sent — no attach round-trip for a locked signer"
+        );
     }
 
     #[test]
