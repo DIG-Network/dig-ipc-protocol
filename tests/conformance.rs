@@ -4,12 +4,12 @@
 //! will fail to verify on the other. A change here is a BREAKING protocol change — never adjust a
 //! vector to match altered code; the vector is the contract.
 
+use chia_bls::SecretKey;
 use dig_ipc_protocol::{
     challenge_message, sign_callback_message, user_sign_message, verify_signature, Signature,
     SigningPublicKey, SESSION_CHALLENGE_DOMAIN, SIGNATURE_LEN, SIGN_CALLBACK_DOMAIN,
     USER_SIGN_DOMAIN,
 };
-use ed25519_dalek::{Signer as _, SigningKey};
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use sha2::{Digest, Sha256};
@@ -71,18 +71,18 @@ fn user_sign_message_golden_vector() {
 
 // --- Cross-protocol-oracle negatives (the 3 the crate MUST defeat) ---------------------------------
 
-fn app_signer() -> SigningKey {
+fn app_signer() -> SecretKey {
     let mut secret = [0u8; 32];
     ChaCha20Rng::seed_from_u64(20260718).fill_bytes(&mut secret);
-    SigningKey::from_bytes(&secret)
+    SecretKey::from_seed(&secret)
 }
 
-fn pubkey(key: &SigningKey) -> SigningPublicKey {
-    SigningPublicKey::new(key.verifying_key().to_bytes())
+fn pubkey(key: &SecretKey) -> SigningPublicKey {
+    SigningPublicKey::new(key.public_key().to_bytes())
 }
 
-fn sign(key: &SigningKey, message: &[u8]) -> Signature {
-    Signature::new(key.sign(message).to_bytes())
+fn sign(key: &SecretKey, message: &[u8]) -> Signature {
+    Signature::new(chia_bls::sign(key, message).to_bytes())
 }
 
 #[test]

@@ -9,19 +9,19 @@
 #     role-halves (`SessionClient` for the app, `EngineSessionRegistry` for the engine),
 #   - the stable APP-SIGN error taxonomy the extension keys its UX off.
 #
-# LEAF CRATE by design: it has NO `dig-*` dependencies (it defines its own 32-byte key newtype), so
+# LEAF CRATE by design: it has NO `dig-*` dependencies (it defines its own 48-byte key newtype), so
 # BOTH dig-app and dig-node depend on THIS one contract rather than maintaining a byte-identical copy
 # each. Transports and signers are DESCRIBED (traits) here, IMPLEMENTED by the consumers.
 [package]
 name = "dig-ipc-protocol"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
 description = "Canonical dig-app ⇄ dig-node IPC session/signing contract: domain-separated challenge/callback/user-sign message builders (app signs, engine verifies), frame bounds, the JSON-RPC control.session.* wire types + sign callback, the seam traits + generic role-halves, and the stable APP-SIGN error taxonomy."
 repository = "https://github.com/DIG-Network/dig-ipc-protocol"
 readme = "README.md"
-keywords = ["dig", "ipc", "session", "ed25519", "jsonrpc"]
+keywords = ["dig", "ipc", "session", "bls12-381", "jsonrpc"]
 categories = ["network-programming", "cryptography", "authentication"]
 
 [dependencies]
@@ -34,9 +34,11 @@ base64 = "0.22"
 hex = "0.4"
 # The error taxonomy + transport/session errors.
 thiserror = "1"
-# Ed25519 verification for the canonical `verify_signature` — a pure crypto dep, NOT a dig-* dep, so
-# the crate stays a leaf. The app owns the private-key signing; this crate only verifies.
-ed25519-dalek = "2"
+# The canonical Chia BLS12-381 primitives (minimal-pubkey-size: G1 pubkeys, G2 signatures, AugScheme
+# sign/verify) for the `verify_signature` contract — a pure crypto dep, NOT a dig-* dep, so the crate
+# stays a leaf. Pinned to the same version line as dig-identity/dig-block so the key type byte-agrees
+# with the identity key it authenticates. The app owns the private-key signing; this crate only verifies.
+chia-bls = "0.26"
 # OS CSPRNG for the production `OsEntropy` nonce source (session challenge nonces).
 getrandom = "0.2"
 

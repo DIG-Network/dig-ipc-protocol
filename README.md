@@ -9,10 +9,10 @@ so the two can never silently drift. Leaf crate — no `dig-*` dependencies.
 
 ```toml
 [dependencies]
-dig-ipc-protocol = "0.1"
+dig-ipc-protocol = "0.2"
 ```
 
-The app's private identity key (`dig-identity` slot `0x0010`, Ed25519) NEVER crosses the channel: the
+The app's private identity key (`dig-identity` slot `0x0010`, BLS12-381 G1) NEVER crosses the channel: the
 app signs a domain-separated message in-process and returns only the detached signature; the engine
 holds no key and only verifies.
 
@@ -27,8 +27,8 @@ holds no key and only verifies.
 | `SESSION_CHALLENGE_DOMAIN` | `&[u8]` | `b"DIGNET-SESSION-v1"` |
 | `SIGN_CALLBACK_DOMAIN` | `&[u8]` | `b"DIGNET-SIGN-v1"` |
 | `USER_SIGN_DOMAIN` | `&[u8]` | `b"DIGNET-USER-SIGN-v1"` |
-| `SIGNING_KEY_LEN` | `usize` | `32` |
-| `SIGNATURE_LEN` | `usize` | `64` |
+| `SIGNING_KEY_LEN` | `usize` | `48` |
+| `SIGNATURE_LEN` | `usize` | `96` |
 | `NONCE_LEN` | `usize` | `32` |
 | `MAX_FRAME_BYTES` | `u64` | `1_048_576` (1 MiB) |
 | `MAX_INTERLEAVED_CALLBACKS` | `usize` | `64` |
@@ -53,7 +53,7 @@ fn user_sign_message(message: &[u8]) -> Vec<u8>;
 // DIGNET-USER-SIGN-v1 ‖ message
 
 fn verify_signature(pk: &SigningPublicKey, message: &[u8], sig: &Signature) -> bool;
-// Ed25519 verify_strict
+// BLS12-381 AugScheme verify (chia-bls); fails closed on a malformed key/signature
 ```
 
 Golden hex vectors (KATs):
@@ -70,15 +70,15 @@ user_sign_message("attest this")  = 4449474e45542d555345522d5349474e2d7631 61747
 ### Key/signature newtypes
 
 ```rust
-struct SigningPublicKey([u8; 32]);   // slot 0x0010 Ed25519 public key
-  fn new(bytes: [u8; 32]) -> Self
-  fn as_bytes(&self) -> &[u8; 32]
+struct SigningPublicKey([u8; 48]);   // slot 0x0010 BLS12-381 compressed G1 public key
+  fn new(bytes: [u8; 48]) -> Self
+  fn as_bytes(&self) -> &[u8; 48]
   fn to_hex(&self) -> String
   fn from_hex(hex_str: &str) -> Option<Self>
 
-struct Signature([u8; 64]);          // Ed25519 signature
-  fn new(bytes: [u8; 64]) -> Self
-  fn as_bytes(&self) -> &[u8; 64]
+struct Signature([u8; 96]);          // BLS12-381 compressed G2 AugScheme signature
+  fn new(bytes: [u8; 96]) -> Self
+  fn as_bytes(&self) -> &[u8; 96]
 ```
 
 ### Wire types (JSON-RPC 2.0 — field names ARE the contract)

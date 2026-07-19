@@ -1,5 +1,5 @@
 //! The signed-message contract: domain separators, the byte-exact message builders the app signs
-//! and the engine verifies, and the Ed25519 key/signature newtypes.
+//! and the engine verifies, and the BLS12-381 key/signature newtypes.
 //!
 //! This module is the security core of the IPC contract. Every signature the app's slot-`0x0010`
 //! identity key produces MUST carry a unique per-purpose domain-separation tag, so a signature minted
@@ -10,12 +10,22 @@
 //! The builders are PURE and CANONICAL: the app and the engine (and any independent reimplementation)
 //! MUST reconstruct these byte strings identically, or a valid signature will fail to verify. The
 //! conformance KATs in `tests/` pin the exact hex output of each builder as a change-detector.
+//!
+//! Signing is Chia's minimal-pubkey-size BLS12-381 AugScheme (`chia-bls`): a 48-byte compressed **G1**
+//! public key and a 96-byte compressed **G2** signature — the same key model as the dig-identity
+//! slot-`0x0010` key it authenticates, so an IPC attach signature verifies against the identity the app
+//! already publishes on-chain. AugScheme's per-signer key-prefixing keeps this signature scheme
+//! non-aggregable with any other signer's, and the [`SESSION_CHALLENGE_DOMAIN`] /
+//! [`SIGN_CALLBACK_DOMAIN`] / [`USER_SIGN_DOMAIN`] tags additionally keep an IPC signature from ever
+//! being confused with a chain spend's `AGG_SIG_ME`/`AGG_SIG_UNSAFE` condition — those sign a
+//! `coin_id`/`additional_data`-bound message under a different domain entirely.
 
-/// The number of bytes in an Ed25519 signing public key (`dig-identity` slot `0x0010`).
-pub const SIGNING_KEY_LEN: usize = 32;
+/// The number of bytes in a compressed BLS12-381 **G1** signing public key (`dig-identity` slot
+/// `0x0010`).
+pub const SIGNING_KEY_LEN: usize = 48;
 
-/// The number of bytes in an Ed25519 signature.
-pub const SIGNATURE_LEN: usize = 64;
+/// The number of bytes in a compressed BLS12-381 **G2** AugScheme signature.
+pub const SIGNATURE_LEN: usize = 96;
 
 /// The number of bytes in a session-attach challenge nonce (a 256-bit random value the engine mints
 /// per `begin`). Large enough that two honest `begin`s never collide and an attacker cannot guess a
@@ -42,9 +52,9 @@ pub const SIGN_CALLBACK_DOMAIN: &[u8] = b"DIGNET-SIGN-v1";
 /// [`user_sign_message`].
 pub const USER_SIGN_DOMAIN: &[u8] = b"DIGNET-USER-SIGN-v1";
 
-/// An Ed25519 signing public key — `dig-identity` slot `0x0010`. A newtype (not a bare `[u8; 32]`) so
-/// the contract has no `dig-*` dependency yet callers cannot accidentally pass an encryption key or a
-/// nonce where a signing key is required.
+/// A compressed BLS12-381 **G1** signing public key — `dig-identity` slot `0x0010`. A newtype (not a
+/// bare `[u8; 48]`) so the contract has no `dig-*` dependency yet callers cannot accidentally pass an
+/// encryption key or a nonce where a signing key is required.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SigningPublicKey([u8; SIGNING_KEY_LEN]);
 
@@ -72,8 +82,8 @@ impl SigningPublicKey {
     }
 }
 
-/// An Ed25519 signature over a domain-separated message. A newtype for the same reason as
-/// [`SigningPublicKey`]: the boundary types carry meaning, not bare byte arrays.
+/// A compressed BLS12-381 **G2** AugScheme signature over a domain-separated message. A newtype for
+/// the same reason as [`SigningPublicKey`]: the boundary types carry meaning, not bare byte arrays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Signature([u8; SIGNATURE_LEN]);
 
@@ -149,28 +159,25 @@ pub fn user_sign_message(message: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Verify an Ed25519 `signature` over `message` against a `signing_public_key` (slot `0x0010`). The
-/// engine half of the contract: the app signs a domain-separated message in-process (its private key
-/// never crossing the IPC boundary), and the engine calls this to confirm the signature binds the
-/// session — or the callback — to exactly the attaching key.
+/// Verify a BLS12-381 AugScheme `signature` over `message` against a `signing_public_key` (slot
+/// `0x0010`). The engine half of the contract: the app signs a domain-separated message in-process
+/// (its private key never crossing the IPC boundary), and the engine calls this to confirm the
+/// signature binds the session — or the callback — to exactly the attaching key.
 ///
-/// Uses `verify_strict` (rejects the malleable / small-order edge cases), so a signature that a
-/// permissive verifier might accept for the wrong key is rejected here.
+/// Fails closed on malformed key/signature bytes (not a valid compressed G1/G2 point) or a
+/// non-verifying signature — never panics on attacker-controlled wire input.
 pub fn verify_signature(
     signing_public_key: &SigningPublicKey,
     message: &[u8],
     signature: &Signature,
 ) -> bool {
-    let Ok(verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(signing_public_key.as_bytes())
-    else {
+    let (Ok(public_key), Ok(signature)) = (
+        chia_bls::PublicKey::from_bytes(signing_public_key.as_bytes()),
+        chia_bls::Signature::from_bytes(signature.as_bytes()),
+    ) else {
         return false;
     };
-    verifying_key
-        .verify_strict(
-            message,
-            &ed25519_dalek::Signature::from_bytes(signature.as_bytes()),
-        )
-        .is_ok()
+    chia_bls::verify(&signature, &public_key, message)
 }
 
 #[cfg(test)]
@@ -224,7 +231,7 @@ mod tests {
         let key = SigningPublicKey::new([7u8; SIGNING_KEY_LEN]);
         assert_eq!(SigningPublicKey::from_hex(&key.to_hex()), Some(key));
         assert!(SigningPublicKey::from_hex("zz").is_none());
-        assert!(SigningPublicKey::from_hex(&"aa".repeat(31)).is_none());
+        assert!(SigningPublicKey::from_hex(&"aa".repeat(SIGNING_KEY_LEN - 1)).is_none());
     }
 
     #[test]
