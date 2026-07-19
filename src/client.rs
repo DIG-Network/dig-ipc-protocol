@@ -9,7 +9,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use crate::bounds::MAX_INTERLEAVED_CALLBACKS;
-use crate::domain::{challenge_message, sign_callback_message};
+use crate::domain::{challenge_message, sign_callback_message, NONCE_LEN};
 use crate::signer::{SessionSigner, SignDecision, SignPolicy, SignRequest};
 use crate::transport::FrameTransport;
 use crate::wire::{
@@ -64,6 +64,20 @@ pub enum SessionError {
     /// A frame the app expected to be a response carried neither a result nor an error.
     #[error("engine frame was neither a valid response nor a known callback")]
     MalformedResponse,
+
+    /// The engine's `begin` nonce did not decode to exactly [`NONCE_LEN`] bytes. The nonce is a
+    /// fixed-length prefix in the `domain ‖ nonce ‖ did` attach challenge ([`challenge_message`]), so
+    /// its length is what makes that concatenation unambiguous WITHOUT a delimiter. A wrong-length
+    /// nonce is rejected here — before it is ever signed over — rather than trusting the engine's
+    /// length implicitly. Named distinctly from [`MalformedResponse`] so the granular taxonomy (§6.2)
+    /// makes an interop mismatch immediately diagnosable.
+    #[error("engine returned a {actual}-byte session nonce; the contract requires exactly {expected} bytes")]
+    InvalidNonceLength {
+        /// The exact nonce length the contract requires ([`NONCE_LEN`]).
+        expected: usize,
+        /// The nonce length the engine actually supplied.
+        actual: usize,
+    },
 
     /// [`SessionClient::handle_next_sign_callback`] read a frame that was not a `sign` callback.
     #[error("expected an engine sign callback but received a different frame")]
@@ -133,6 +147,16 @@ impl<T: FrameTransport, S: SessionSigner, P: SignPolicy> SessionClient<T, S, P> 
         let nonce = BASE64
             .decode(begin.nonce_b64.as_bytes())
             .map_err(|_| SessionError::MalformedResponse)?;
+
+        // A fixed-length nonce is what makes the `domain ‖ nonce ‖ did` challenge concatenation
+        // unambiguous WITHOUT a length delimiter (see `challenge_message`). Reject a wrong-length
+        // nonce here — before it is ever signed over — rather than trusting the engine's length.
+        if nonce.len() != NONCE_LEN {
+            return Err(SessionError::InvalidNonceLength {
+                expected: NONCE_LEN,
+                actual: nonce.len(),
+            });
+        }
 
         // We advertised `signer`'s public key in `begin`, and we attach `profile.did`; assert locally
         // the key we sign with is the one we advertised, so a future refactor that let them diverge
@@ -432,7 +456,7 @@ impl SessionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{verify_signature, Signature, SigningPublicKey, SIGNATURE_LEN};
+    use crate::domain::{verify_signature, Signature, SigningPublicKey, NONCE_LEN, SIGNATURE_LEN};
     use crate::signer::{AllowAllSignPolicy, DenyAllSignPolicy};
     use crate::test_support::{FakeTransport, LockableSigner, TestSigner};
     use sha2::{Digest, Sha256};
@@ -507,6 +531,40 @@ mod tests {
             &client.transport.outgoing[1],
             &stranger.public()
         ));
+    }
+
+    #[test]
+    fn begin_and_attach_rejects_a_wrong_length_nonce() {
+        // The engine's nonce is a fixed-length prefix in the `domain ‖ nonce ‖ did` challenge, so a
+        // wrong length would make that concatenation ambiguous. The client MUST reject it BEFORE
+        // signing, and MUST NOT send an attach round-trip for it (only the `begin` request goes out —
+        // mirroring `begin_and_attach_fails_closed_when_the_signer_is_locked_without_a_round_trip`).
+        let short_nonce = &Sha256::digest(b"dig-ipc-protocol wrong-length nonce fixture")[..31];
+        assert_eq!(short_nonce.len(), 31);
+        let begin = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"nonce_b64":"{}","session_candidate":"cand-1"}}}}"#,
+            BASE64.encode(short_nonce)
+        );
+        let transport = FakeTransport::scripted([begin]);
+        let mut client = SessionClient::new(transport, TestSigner::seeded(42), AllowAllSignPolicy);
+
+        let result = client.begin_and_attach(profile());
+
+        assert!(
+            matches!(
+                result,
+                Err(SessionError::InvalidNonceLength {
+                    expected: NONCE_LEN,
+                    actual: 31
+                })
+            ),
+            "expected InvalidNonceLength {{ expected: {NONCE_LEN}, actual: 31 }}, got {result:?}"
+        );
+        assert_eq!(
+            client.transport.outgoing.len(),
+            1,
+            "only the begin request should have been sent — no attach round-trip for a bad nonce"
+        );
     }
 
     #[test]

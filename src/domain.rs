@@ -102,6 +102,12 @@ impl Signature {
 /// Builds the exact bytes the identity key signs to attach a session: the domain separator, then the
 /// engine's nonce, then the profile DID. Pure and canonical — the engine reconstructs the identical
 /// message to verify, so app and engine MUST agree on this construction byte-for-byte.
+///
+/// `nonce` MUST be exactly [`NONCE_LEN`] bytes: with no length delimiter between the fields, the
+/// fixed-length nonce is what keeps the `domain ‖ nonce ‖ did` concatenation unambiguous (otherwise
+/// `(nonce, did)` and `(nonce', did')` could collide across a shifted boundary). The client enforces
+/// this on the engine-supplied nonce (rejecting a wrong length as `SessionError::InvalidNonceLength`)
+/// BEFORE calling this builder.
 pub fn challenge_message(nonce: &[u8], profile_did: &str) -> Vec<u8> {
     let mut message =
         Vec::with_capacity(SESSION_CHALLENGE_DOMAIN.len() + nonce.len() + profile_did.len());
