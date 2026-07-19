@@ -43,6 +43,49 @@ impl SessionSigner for TestSigner {
     }
 }
 
+/// A [`SessionSigner`] that models a lockable, profile-backed identity: when unlocked it signs like a
+/// [`TestSigner`]; when locked, [`try_sign`](SessionSigner::try_sign) returns `None` and the infallible
+/// [`sign`](SessionSigner::sign) returns the all-zero **fail-safe** signature (mirroring the production
+/// `ProfileSessionSigner`). Lets a test prove callers fail closed on a locked profile rather than
+/// framing the bogus all-zero signature.
+pub struct LockableSigner {
+    inner: TestSigner,
+    locked: bool,
+}
+
+impl LockableSigner {
+    /// A lockable signer seeded like [`TestSigner::seeded`], initially in the given `locked` state.
+    pub fn seeded(seed: u64, locked: bool) -> Self {
+        Self {
+            inner: TestSigner::seeded(seed),
+            locked,
+        }
+    }
+}
+
+impl SessionSigner for LockableSigner {
+    fn signing_public_key(&self) -> SigningPublicKey {
+        self.inner.public()
+    }
+
+    fn sign(&self, message: &[u8]) -> Signature {
+        // The fail-safe: a locked profile has no key, so the infallible path returns the all-zero
+        // (non-verifying) signature. A fail-closed caller must use `try_sign` and never frame this.
+        match self.try_sign(message) {
+            Some(signature) => signature,
+            None => Signature::new([0u8; crate::domain::SIGNATURE_LEN]),
+        }
+    }
+
+    fn try_sign(&self, message: &[u8]) -> Option<Signature> {
+        if self.locked {
+            None
+        } else {
+            Some(self.inner.sign(message))
+        }
+    }
+}
+
 /// A resolver that maps a single known DID to a fixed key (the engine's DID→key backstop under test).
 pub struct StubResolver {
     pub did: String,

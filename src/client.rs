@@ -244,14 +244,30 @@ impl<T: FrameTransport, S: SessionSigner, P: SignPolicy> SessionClient<T, S, P> 
                 // `DIGNET-SESSION-v1` (or any other) tag those messages carry.
                 match sign_callback_message(&params.payload_type, &payload) {
                     Some(message) => {
-                        let signature = self.signer.sign(&message);
-                        self.send_result(
-                            &id,
-                            SignCallbackResult {
-                                signature_b64: BASE64.encode(signature.as_bytes()),
-                                pubkey_hex: self.signer.signing_public_key_hex(),
-                            },
-                        )?;
+                        // Sign FALLIBLY: a locked profile yields `None`, which MUST become a `LOCKED`
+                        // error — never a success envelope carrying the bogus/all-zero fail-safe
+                        // signature (SPEC §3.4 / §5.6.7). Mirrors the loopback FrameRouter dispatch.
+                        match self.signer.try_sign(&message) {
+                            Some(signature) => {
+                                self.send_result(
+                                    &id,
+                                    SignCallbackResult {
+                                        signature_b64: BASE64.encode(signature.as_bytes()),
+                                        pubkey_hex: self.signer.signing_public_key_hex(),
+                                    },
+                                )?;
+                            }
+                            None => {
+                                self.send_error(
+                                    &id,
+                                    SignErrorCode::Locked.code(),
+                                    "active profile is locked; no key to sign with",
+                                )?;
+                                return Ok(SignDecision::Deny(
+                                    "active profile is locked".to_string(),
+                                ));
+                            }
+                        }
                     }
                     None => {
                         self.send_error(
@@ -401,7 +417,7 @@ mod tests {
     use super::*;
     use crate::domain::{verify_signature, Signature, SigningPublicKey, SIGNATURE_LEN};
     use crate::signer::{AllowAllSignPolicy, DenyAllSignPolicy};
-    use crate::test_support::{FakeTransport, TestSigner};
+    use crate::test_support::{FakeTransport, LockableSigner, TestSigner};
     use sha2::{Digest, Sha256};
 
     const DID: &str = "did:chia:testprofile";
@@ -564,6 +580,34 @@ mod tests {
         assert_eq!(reply["id"], 88);
         assert_eq!(reply["error"]["code"], SignErrorCode::SignDenied.code());
         assert!(reply.get("result").is_none());
+    }
+
+    #[test]
+    fn sign_callback_fails_closed_when_the_signer_is_locked() {
+        // A policy-approved callback, but the profile is locked so there is no key to sign with. The
+        // client MUST answer LOCKED and NEVER frame a success envelope carrying the all-zero fail-safe
+        // signature (SPEC §3.4 / §5.6.7).
+        let callback = format!(
+            r#"{{"jsonrpc":"2.0","id":91,"method":"sign","params":{{"session_id":"sess-1","op_id":"op-2","payload_type":"spend","payload_b64":"{}"}}}}"#,
+            BASE64.encode(b"spend-bundle-bytes")
+        );
+        let transport = FakeTransport::scripted([callback]);
+        let locked = LockableSigner::seeded(42, true);
+        let mut client = SessionClient::new(transport, locked, AllowAllSignPolicy);
+
+        let decision = client.handle_next_sign_callback().unwrap();
+        assert!(
+            matches!(decision, SignDecision::Deny(_)),
+            "a locked signer must not report a signed decision"
+        );
+
+        let reply: serde_json::Value = serde_json::from_str(&client.transport.outgoing[0]).unwrap();
+        assert_eq!(reply["id"], 91);
+        assert_eq!(reply["error"]["code"], SignErrorCode::Locked.code());
+        assert!(
+            reply.get("result").is_none(),
+            "the client must never frame a success envelope for a locked signer"
+        );
     }
 
     #[test]
