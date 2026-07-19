@@ -82,7 +82,9 @@ The engine asks the app to sign an engine-initiated operation. Request `params`:
 `{ session_id, op_id, payload_type, payload_b64, context? }`.
 On approval the app replies `{ signature_b64, pubkey_hex }`, the signature over
 `sign_callback_message(payload_type, payload)`. The reply MUST NOT contain the private key.
-On denial / bad payload the app replies a JSON-RPC error (§5); the request is never signed.
+On denial / bad payload the app replies a JSON-RPC error (§5); the request is never signed. If the
+active profile is locked when the app would sign, the app MUST reply `LOCKED` (§5) and MUST NOT frame a
+success envelope carrying a bogus/all-zero fail-safe signature — signing fails CLOSED.
 
 The callback is full-duplex with the handshake: a `sign` callback MAY arrive interleaved before a
 handshake response, and both sides MUST service it in order.

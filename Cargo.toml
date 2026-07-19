@@ -14,7 +14,7 @@
 # each. Transports and signers are DESCRIBED (traits) here, IMPLEMENTED by the consumers.
 [package]
 name = "dig-ipc-protocol"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
