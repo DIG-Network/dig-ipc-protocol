@@ -14,7 +14,7 @@
 # each. Transports and signers are DESCRIBED (traits) here, IMPLEMENTED by the consumers.
 [package]
 name = "dig-ipc-protocol"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -36,9 +36,12 @@ hex = "0.4"
 thiserror = "1"
 # The canonical Chia BLS12-381 primitives (minimal-pubkey-size: G1 pubkeys, G2 signatures, AugScheme
 # sign/verify) for the `verify_signature` contract — a pure crypto dep, NOT a dig-* dep, so the crate
-# stays a leaf. Pinned to the same version line as dig-identity/dig-block so the key type byte-agrees
-# with the identity key it authenticates. The app owns the private-key signing; this crate only verifies.
-chia-bls = "0.26"
+# stays a leaf. Held on the ECOSYSTEM chia line (0.36.1), the same line `dig-identity` resolves, so the
+# key type byte-agrees with the identity key it authenticates. `chia_bls` reaches no public signature
+# here (it is used only inside `verify_signature` and the test doubles), so the pin is a wire-compat
+# statement, not a type-identity one — `tests/bls_vectors.rs` holds it to AugScheme bytes measured on
+# the previous line. The app owns the private-key signing; this crate only verifies.
+chia-bls = "0.36.1"
 # OS CSPRNG for the production `OsEntropy` nonce source (session challenge nonces).
 getrandom = "0.2"
 
