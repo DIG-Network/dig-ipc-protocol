@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.3.1] - 2026-08-26
+
+### Chores
+- **deps:** Move chia-bls 0.26 -> 0.36.1 onto the ecosystem chia line (#6)
+
 ## [0.3.0] - 2026-07-19
 
 ### Bug Fixes
